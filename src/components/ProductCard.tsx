@@ -1,3 +1,4 @@
+import React from "react";
 import { ShoppingCart } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardFooter } from "./ui/card";
@@ -49,7 +50,7 @@ export function ProductCard({ product, onAddToCart, onViewDetails }: ProductCard
       <CardFooter className="p-4 pt-0">
         <Button
           className="w-full"
-          onClick={(e) => {
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.stopPropagation();
             onAddToCart(product);
           }}
