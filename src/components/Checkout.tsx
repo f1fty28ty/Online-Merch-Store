@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Separator } from "./ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
-import { CartItem } from "./ShoppingCart";
+import type { CartItem } from "./ShoppingCart";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
-import { toast } from "sonner@2.0.3";
+import { toast } from "sonner";
 
 interface CheckoutProps {
   items: CartItem[];
@@ -45,7 +45,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
   });
 
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const shipping = 0; // Free shipping
+  const shipping: number = 0; // Free shipping
   const tax = subtotal * 0.08; // 8% tax
   const total = subtotal + shipping + tax;
 
@@ -258,7 +258,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
                         <Label htmlFor="country">Country *</Label>
                         <Select
                           value={shippingInfo.country}
-                          onValueChange={(value) =>
+                          onValueChange={(value: string) =>
                             setShippingInfo({ ...shippingInfo, country: value })
                           }
                         >
