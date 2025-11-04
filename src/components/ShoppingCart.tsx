@@ -4,7 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter
 import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { ScrollArea } from "./ui/scroll-area";
-import type { Product } from "./ProductCard";
+import { Product } from "./ProductCard";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 
 export interface CartItem extends Product {

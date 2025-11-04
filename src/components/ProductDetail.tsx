@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { ShoppingCart } from "lucide-react";
-import type { Product } from "./ProductCard";
+import { Product } from "./ProductCard";
 import { Badge } from "./ui/badge";
 import { useState } from "react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
