@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ProductCard } from "./components/ProductCard";
-import type { Product, CartItem } from "./components/types";
+import type { Product, CartItem } from "../types";
 import { ShoppingCartComponent } from "./components/ShoppingCart";
 import { ProductDetail } from "./components/ProductDetail";
 import { Checkout } from "./components/Checkout";
@@ -10,7 +10,6 @@ import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
 import { supabase } from "../lib/initSupabase";
-
 
 export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
