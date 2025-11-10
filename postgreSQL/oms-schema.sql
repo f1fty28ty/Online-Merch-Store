@@ -1,19 +1,45 @@
 -- ============================================
--- Minimal OMS Schema with FIFO Customer Cycling
--- Optimized for client-side cart management
--- Only persists to DB on order confirmation
--- All sales final - no refunds
+-- Enhanced OMS Schema with Product Variants
+-- Replaces hardcoded sizes/colors with lookup tables
 -- ============================================
 
+-- Remove old enum types if they exist
+DROP TYPE IF EXISTS size CASCADE;
+DROP TYPE IF EXISTS color CASCADE;
+DROP TYPE IF EXISTS order_status CASCADE;
+
+-- Order Status Enum
+CREATE TYPE order_status AS ENUM ('pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled');
+
+-- ============================================
+-- LOOKUP TABLES FOR VARIANTS
+-- ============================================
+
+-- Sizes lookup table
+CREATE TABLE IF NOT EXISTS Sizes (
+    sizeId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sizeName VARCHAR(50) NOT NULL UNIQUE,
+    sortOrder INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Colors lookup table
+CREATE TABLE IF NOT EXISTS Colors (
+    colorId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    colorName VARCHAR(50) NOT NULL UNIQUE,
+    hexCode VARCHAR(7), -- Optional: for displaying color swatches
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- Categories
-CREATE TABLE Categories (
+CREATE TABLE IF NOT EXISTS Categories (
     categoryId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Customers with FIFO cycling
-CREATE TABLE Customers (
+CREATE TABLE IF NOT EXISTS Customers (
     customerId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customerName VARCHAR(255),
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -25,27 +51,51 @@ CREATE TABLE Customers (
     updated_at TIMESTAMP DEFAULT NOW(),
     last_login TIMESTAMP,
     deleted_at TIMESTAMP,
-    -- FIFO cycling fields
-    cycle_position INT, -- 1-10 position in queue
+    cycle_position INT,
     is_active BOOLEAN DEFAULT TRUE
 );
 
-CREATE INDEX idx_customers_cycle ON Customers(cycle_position, is_active) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_customers_cycle ON Customers(cycle_position, is_active) WHERE deleted_at IS NULL;
 
--- Products
-CREATE TABLE Products (
+-- ============================================
+-- PRODUCTS WITH VARIANT SUPPORT
+-- ============================================
+
+-- Base Products (parent/master products)
+CREATE TABLE IF NOT EXISTS Products (
     productId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    price DECIMAL(10,2) NOT NULL,
-    stockQuantity INT DEFAULT 0,
+    basePrice DECIMAL(10,2) NOT NULL,
+    categoryName VARCHAR(255),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     deleted_at TIMESTAMP
 );
 
--- Product-Category junction (many-to-many)
-CREATE TABLE ProductCategories (
+-- Product Variants (SKU level - specific size/color combinations)
+CREATE TABLE IF NOT EXISTS ProductVariants (
+    variantId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    productId UUID NOT NULL,
+    sizeId UUID,
+    colorId UUID,
+    sku VARCHAR(100) UNIQUE,
+    price DECIMAL(10,2), -- Override base price if needed
+    stockQuantity INT DEFAULT 0,
+    inStock BOOLEAN GENERATED ALWAYS AS (stockQuantity > 0) STORED,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (productId) REFERENCES Products(productId) ON DELETE CASCADE,
+    FOREIGN KEY (sizeId) REFERENCES Sizes(sizeId),
+    FOREIGN KEY (colorId) REFERENCES Colors(colorId),
+    UNIQUE (productId, sizeId, colorId) -- Prevent duplicate variants
+);
+
+CREATE INDEX IF NOT EXISTS idx_variants_product ON ProductVariants(productId);
+CREATE INDEX IF NOT EXISTS idx_variants_stock ON ProductVariants(stockQuantity) WHERE stockQuantity > 0;
+
+-- Product-Category junction
+CREATE TABLE IF NOT EXISTS ProductCategories (
     productId UUID NOT NULL,
     categoryId UUID NOT NULL,
     PRIMARY KEY (productId, categoryId),
@@ -54,32 +104,31 @@ CREATE TABLE ProductCategories (
 );
 
 -- Product Images
-CREATE TABLE Images (
+CREATE TABLE IF NOT EXISTS Images (
     imageId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     productId UUID NOT NULL,
+    colorId UUID, -- Optional: associate image with specific color
     url TEXT NOT NULL,
     displayOrder INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (productId) REFERENCES Products(productId) ON DELETE CASCADE
+    FOREIGN KEY (productId) REFERENCES Products(productId) ON DELETE CASCADE,
+    FOREIGN KEY (colorId) REFERENCES Colors(colorId)
 );
 
--- Payment Methods (optional - can also pass card info directly at checkout)
-CREATE TABLE PaymentMethods (
+-- Payment Methods
+CREATE TABLE IF NOT EXISTS PaymentMethods (
     paymentMethodId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customerId UUID NOT NULL,
     cardholderName VARCHAR(255),
-    last4Digits VARCHAR(4), -- Only store last 4 digits
-    cardBrand VARCHAR(50), -- 'visa', 'mastercard', etc.
+    last4Digits VARCHAR(4),
+    cardBrand VARCHAR(50),
     expirationDate DATE,
     created_at TIMESTAMP DEFAULT NOW(),
     FOREIGN KEY (customerId) REFERENCES Customers(customerId)
 );
 
--- Order Status Enum
-CREATE TYPE order_status AS ENUM ('pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled');
-
 -- Orders
-CREATE TABLE Orders (
+CREATE TABLE IF NOT EXISTS Orders (
     orderId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     customerId UUID NOT NULL,
     orderTimestamp TIMESTAMP DEFAULT NOW(),
@@ -93,119 +142,154 @@ CREATE TABLE Orders (
     FOREIGN KEY (customerId) REFERENCES Customers(customerId)
 );
 
--- Order Items (cart items saved on order confirmation)
-CREATE TABLE OrderItems (
+-- Order Items - now references variants
+CREATE TABLE IF NOT EXISTS OrderItems (
     orderItemId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     orderId UUID NOT NULL,
-    productId UUID NOT NULL,
-    productName VARCHAR(255), -- Store name in case product deleted later
+    variantId UUID NOT NULL,
+    productName VARCHAR(255),
+    sizeName VARCHAR(50),
+    colorName VARCHAR(50),
     quantity INT NOT NULL CHECK (quantity > 0),
     unitPrice DECIMAL(10,2) NOT NULL,
     subtotal DECIMAL(10,2) NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     FOREIGN KEY (orderId) REFERENCES Orders(orderId) ON DELETE CASCADE,
-    FOREIGN KEY (productId) REFERENCES Products(productId)
+    FOREIGN KEY (variantId) REFERENCES ProductVariants(variantId)
 );
 
 -- ============================================
--- FIFO Customer Cycling Functions
+-- SEED DATA FOR VARIANTS
 -- ============================================
 
-CREATE OR REPLACE FUNCTION add_customer_with_cycling(
-  p_email varchar,
-  p_customerpasswd text,
-  p_customername varchar DEFAULT NULL,
-  p_phonenum varchar DEFAULT NULL,
-  p_shippingaddress text DEFAULT NULL,
-  p_billingaddress text DEFAULT NULL
-) RETURNS uuid AS $$
-DECLARE
-  new_customer_id uuid;
-  current_count int;
-  oldest_customer_id uuid;
-BEGIN
-  -- Count active customers
-  SELECT COUNT(*) INTO current_count 
-  FROM customers 
-  WHERE is_active = TRUE AND deleted_at IS NULL;
-  
-  -- If we have 10 customers, cycle out the oldest
-  IF current_count >= 10 THEN
-    -- Find oldest customer by cycle_position = 1
-    SELECT customerid INTO oldest_customer_id
-    FROM customers
-    WHERE is_active = TRUE AND deleted_at IS NULL
-    ORDER BY cycle_position ASC
-    LIMIT 1;
-    
-    -- Soft delete oldest customer
-    UPDATE customers SET is_active = FALSE, deleted_at = NOW() 
-    WHERE customerid = oldest_customer_id;
-    
-    -- Shift all positions down
-    UPDATE customers 
-    SET cycle_position = cycle_position - 1
-    WHERE is_active = TRUE AND deleted_at IS NULL;
-  END IF;
-  
-  -- Insert new customer at end of queue
-  INSERT INTO customers (
-    email, customerpasswd, customername, phonenum, 
-    shippingaddress, billingaddress, cycle_position, is_active
-  )
-  VALUES (
-    p_email, p_customerpasswd, p_customername, p_phonenum,
-    p_shippingaddress, p_billingaddress,
-    LEAST(current_count + 1, 10), TRUE
-  )
-  RETURNING customerid INTO new_customer_id;
-  
-  RETURN new_customer_id;
-END;
-$$ LANGUAGE plpgsql;
+-- Insert standard sizes
+INSERT INTO Sizes (sizeName, sortOrder) VALUES
+    ('XS', 1),
+    ('S', 2),
+    ('M', 3),
+    ('L', 4),
+    ('XL', 5),
+    ('XXL', 6),
+    ('One Size', 7)
+ON CONFLICT (sizeName) DO NOTHING;
 
-CREATE OR REPLACE FUNCTION get_active_customers()
+-- Insert standard colors with hex codes
+INSERT INTO Colors (colorName, hexCode) VALUES
+    ('Black', '#000000'),
+    ('White', '#FFFFFF'),
+    ('Gray', '#808080'),
+    ('Grey', '#808080'),
+    ('Navy', '#000080'),
+    ('Red', '#FF0000'),
+    ('Cream', '#FFFDD0'),
+    ('Natural', '#F5F5DC')
+ON CONFLICT (colorName) DO NOTHING;
+
+-- ============================================
+-- ENHANCED FUNCTIONS
+-- ============================================
+
+-- Get products with all available variants
+CREATE OR REPLACE FUNCTION get_products_with_variants()
 RETURNS TABLE (
-  customerid uuid,
-  customername varchar,
-  email varchar,
-  cycle_position int
-) AS $$
+  productid uuid,
+  name varchar,
+  description text,
+  baseprice numeric,
+  categories text[],
+  images text[],
+  available_sizes jsonb,
+  available_colors jsonb,
+  variants jsonb,
+  in_stock boolean
+)
+LANGUAGE plpgsql
+AS '
 BEGIN
   RETURN QUERY
-  SELECT c.customerid, c.customername, c.email, c.cycle_position
-  FROM customers c
-  WHERE c.is_active = TRUE AND c.deleted_at IS NULL
-  ORDER BY c.cycle_position ASC;
+  SELECT 
+    p.productid,
+    p.name,
+    p.description,
+    p.baseprice,
+    ARRAY_AGG(DISTINCT c.name) FILTER (WHERE c.name IS NOT NULL) as categories,
+    ARRAY_AGG(DISTINCT i.url ORDER BY i.displayorder) FILTER (WHERE i.url IS NOT NULL) as images,
+    
+    -- Available sizes as JSON array
+    (SELECT jsonb_agg(DISTINCT jsonb_build_object(''id'', s.sizeid, ''name'', s.sizename) ORDER BY jsonb_build_object(''id'', s.sizeid, ''name'', s.sizename))
+     FROM productvariants pv
+     JOIN sizes s ON pv.sizeid = s.sizeid
+     WHERE pv.productid = p.productid AND pv.stockquantity > 0) as available_sizes,
+    
+    -- Available colors as JSON array
+    (SELECT jsonb_agg(DISTINCT jsonb_build_object(''id'', co.colorid, ''name'', co.colorname, ''hex'', co.hexcode) ORDER BY jsonb_build_object(''id'', co.colorid, ''name'', co.colorname, ''hex'', co.hexcode))
+     FROM productvariants pv
+     JOIN colors co ON pv.colorid = co.colorid
+     WHERE pv.productid = p.productid AND pv.stockquantity > 0) as available_colors,
+    
+    -- All variants with stock info
+    (SELECT jsonb_agg(
+      jsonb_build_object(
+        ''variantId'', pv.variantid,
+        ''sku'', pv.sku,
+        ''size'', s.sizename,
+        ''color'', co.colorname,
+        ''price'', COALESCE(pv.price, p.baseprice),
+        ''stock'', pv.stockquantity,
+        ''inStock'', pv.instock
+      )
+    )
+     FROM productvariants pv
+     LEFT JOIN sizes s ON pv.sizeid = s.sizeid
+     LEFT JOIN colors co ON pv.colorid = co.colorid
+     WHERE pv.productid = p.productid) as variants,
+    
+    -- Product is in stock if any variant has stock
+    EXISTS(
+      SELECT 1 FROM productvariants pv2 
+      WHERE pv2.productid = p.productid AND pv2.stockquantity > 0
+    ) as in_stock
+    
+  FROM products p
+  LEFT JOIN productcategories pc ON p.productid = pc.productid
+  LEFT JOIN categories c ON pc.categoryid = c.categoryid
+  LEFT JOIN images i ON p.productid = i.productid
+  WHERE p.deleted_at IS NULL
+  GROUP BY p.productid;
 END;
-$$ LANGUAGE plpgsql;
+';
 
--- ============================================
--- Order Creation (Cart -> Order)
--- ============================================
-
--- Create order with items from client-side cart
--- Pass cart items as JSON: [{productId, quantity, unitPrice}]
-CREATE OR REPLACE FUNCTION create_order(
+-- Create order with variant support
+CREATE OR REPLACE FUNCTION create_order_with_variants(
   p_customerid uuid,
-  p_items jsonb, -- [{productId, quantity, unitPrice}]
+  p_items jsonb,
   p_shipping_address text,
   p_shipping_cost numeric DEFAULT 0
-) RETURNS uuid AS $$
+) RETURNS uuid
+LANGUAGE plpgsql
+AS '
 DECLARE
   new_orderid uuid;
   subtotal_amt numeric := 0;
   total_amt numeric;
   item jsonb;
   prod_name varchar;
+  size_name varchar;
+  color_name varchar;
+  variant_price numeric;
 BEGIN
-  -- Calculate subtotal from items
+  -- Calculate subtotal
   FOR item IN SELECT * FROM jsonb_array_elements(p_items)
   LOOP
-    subtotal_amt := subtotal_amt + ((item->>'quantity')::int * (item->>'unitPrice')::numeric);
+    SELECT COALESCE(pv.price, p.baseprice)
+    INTO variant_price
+    FROM productvariants pv
+    JOIN products p ON pv.productid = p.productid
+    WHERE pv.variantid = (item->>''variantId'')::uuid;
+    
+    subtotal_amt := subtotal_amt + ((item->>''quantity'')::int * variant_price);
   END LOOP;
   
-  -- Calculate total
   total_amt := subtotal_amt + p_shipping_cost;
   
   -- Create order
@@ -215,58 +299,47 @@ BEGIN
   )
   VALUES (
     p_customerid, subtotal_amt, p_shipping_cost, total_amt,
-    p_shipping_address, 'pending'
+    p_shipping_address, ''pending''
   )
   RETURNING orderid INTO new_orderid;
   
   -- Insert order items
   FOR item IN SELECT * FROM jsonb_array_elements(p_items)
   LOOP
-    -- Get product name
-    SELECT name INTO prod_name 
-    FROM products 
-    WHERE productid = (item->>'productId')::uuid;
+    SELECT p.name, s.sizename, co.colorname, COALESCE(pv.price, p.baseprice)
+    INTO prod_name, size_name, color_name, variant_price
+    FROM productvariants pv
+    JOIN products p ON pv.productid = p.productid
+    LEFT JOIN sizes s ON pv.sizeid = s.sizeid
+    LEFT JOIN colors co ON pv.colorid = co.colorid
+    WHERE pv.variantid = (item->>''variantId'')::uuid;
     
-    -- Insert order item
     INSERT INTO orderitems (
-      orderid, productid, productname, quantity, unitprice, subtotal
+      orderid, variantid, productname, sizename, colorname, 
+      quantity, unitprice, subtotal
     )
     VALUES (
       new_orderid,
-      (item->>'productId')::uuid,
+      (item->>''variantId'')::uuid,
       prod_name,
-      (item->>'quantity')::int,
-      (item->>'unitPrice')::numeric,
-      ((item->>'quantity')::int * (item->>'unitPrice')::numeric)
+      size_name,
+      color_name,
+      (item->>''quantity'')::int,
+      variant_price,
+      ((item->>''quantity'')::int * variant_price)
     );
     
-    -- Update product stock
-    UPDATE products 
-    SET stockquantity = stockquantity - (item->>'quantity')::int
-    WHERE productid = (item->>'productId')::uuid;
+    -- Update stock
+    UPDATE productvariants 
+    SET stockquantity = stockquantity - (item->>''quantity'')::int
+    WHERE variantid = (item->>''variantId'')::uuid;
   END LOOP;
   
   RETURN new_orderid;
 END;
-$$ LANGUAGE plpgsql;
+';
 
--- Update order status
-CREATE OR REPLACE FUNCTION update_order_status(
-  p_orderid uuid,
-  p_status order_status
-) RETURNS void AS $$
-BEGIN
-  UPDATE orders 
-  SET status = p_status, updated_at = NOW()
-  WHERE orderid = p_orderid;
-END;
-$$ LANGUAGE plpgsql;
-
--- ============================================
--- Receipt Page Queries
--- ============================================
-
--- Get complete order details for receipt
+-- Get order receipt with variant details
 CREATE OR REPLACE FUNCTION get_order_receipt(p_orderid uuid)
 RETURNS TABLE (
   orderid uuid,
@@ -278,7 +351,9 @@ RETURNS TABLE (
   subtotal numeric,
   shippingcost numeric,
   totalamount numeric
-) AS $$
+)
+LANGUAGE plpgsql
+AS $$
 BEGIN
   RETURN QUERY
   SELECT 
@@ -295,58 +370,93 @@ BEGIN
   JOIN customers c ON o.customerid = c.customerid
   WHERE o.orderid = p_orderid;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
--- Get order line items for receipt
-CREATE OR REPLACE FUNCTION get_order_items(p_orderid uuid)
+-- Get order items with variant details
+CREATE OR REPLACE FUNCTION get_order_items_with_variants(p_orderid uuid)
 RETURNS TABLE (
   productname varchar,
+  sizename varchar,
+  colorname varchar,
   quantity int,
   unitprice numeric,
   subtotal numeric
-) AS $$
+)
+LANGUAGE plpgsql
+AS '
 BEGIN
   RETURN QUERY
   SELECT 
     oi.productname,
+    oi.sizename,
+    oi.colorname,
     oi.quantity,
     oi.unitprice,
     oi.subtotal
   FROM orderitems oi
   WHERE oi.orderid = p_orderid;
 END;
-$$ LANGUAGE plpgsql;
+';
 
--- ============================================
--- Product Management
--- ============================================
-
--- Get all products with categories and images
-CREATE OR REPLACE FUNCTION get_products()
-RETURNS TABLE (
-  productid uuid,
-  name varchar,
-  description text,
-  price numeric,
-  stockquantity int,
-  categories text[], -- array of category names
-  images text[] -- array of image URLs
-) AS $$
+-- Customer cycling functions (unchanged)
+CREATE OR REPLACE FUNCTION add_customer_with_cycling(
+  p_email varchar,
+  p_customerpasswd text,
+  p_customername varchar DEFAULT NULL,
+  p_phonenum varchar DEFAULT NULL,
+  p_shippingaddress text DEFAULT NULL,
+  p_billingaddress text DEFAULT NULL
+) RETURNS uuid
+LANGUAGE plpgsql
+AS '
+DECLARE
+  new_customer_id uuid;
+  current_count int;
+  oldest_customer_id uuid;
 BEGIN
-  RETURN QUERY
-  SELECT 
-    p.productid,
-    p.name,
-    p.description,
-    p.price,
-    p.stockquantity,
-    ARRAY_AGG(DISTINCT c.name) FILTER (WHERE c.name IS NOT NULL) as categories,
-    ARRAY_AGG(DISTINCT i.url ORDER BY i.displayorder) FILTER (WHERE i.url IS NOT NULL) as images
-  FROM products p
-  LEFT JOIN productcategories pc ON p.productid = pc.productid
-  LEFT JOIN categories c ON pc.categoryid = c.categoryid
-  LEFT JOIN images i ON p.productid = i.productid
-  WHERE p.deleted_at IS NULL
-  GROUP BY p.productid;
+  SELECT COUNT(*) INTO current_count 
+  FROM customers 
+  WHERE is_active = TRUE AND deleted_at IS NULL;
+  
+  IF current_count >= 10 THEN
+    SELECT customerid INTO oldest_customer_id
+    FROM customers
+    WHERE is_active = TRUE AND deleted_at IS NULL
+    ORDER BY cycle_position ASC
+    LIMIT 1;
+    
+    UPDATE customers SET is_active = FALSE, deleted_at = NOW() 
+    WHERE customerid = oldest_customer_id;
+    
+    UPDATE customers 
+    SET cycle_position = cycle_position - 1
+    WHERE is_active = TRUE AND deleted_at IS NULL;
+  END IF;
+  
+  INSERT INTO customers (
+    email, customerpasswd, customername, phonenum, 
+    shippingaddress, billingaddress, cycle_position, is_active
+  )
+  VALUES (
+    p_email, p_customerpasswd, p_customername, p_phonenum,
+    p_shippingaddress, p_billingaddress,
+    LEAST(current_count + 1, 10), TRUE
+  )
+  RETURNING customerid INTO new_customer_id;
+  
+  RETURN new_customer_id;
 END;
-$$ LANGUAGE plpgsql;
+';
+
+CREATE OR REPLACE FUNCTION update_order_status(
+  p_orderid uuid,
+  p_status order_status
+) RETURNS void
+LANGUAGE plpgsql
+AS '
+BEGIN
+  UPDATE orders 
+  SET status = p_status, updated_at = NOW()
+  WHERE orderid = p_orderid;
+END;
+';
