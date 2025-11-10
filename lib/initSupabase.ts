@@ -3,8 +3,17 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 // Vite uses import.meta.env, not process.env
 // And Vite requires VITE_ prefix, not NEXT_PUBLIC_
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+// Support both VITE_ and NEXT_PUBLIC_ prefixes for compatibility
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+if (!supabaseUrl) {
+  throw new Error('Missing env.VITE_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL')
+}
+
+if (!supabaseAnonKey) {
+  throw new Error('Missing env.VITE_SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY')
+}
 
 export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey)
 

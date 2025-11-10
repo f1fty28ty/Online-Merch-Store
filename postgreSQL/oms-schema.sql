@@ -216,16 +216,24 @@ BEGIN
     ARRAY_AGG(DISTINCT i.url ORDER BY i.displayorder) FILTER (WHERE i.url IS NOT NULL) as images,
     
     -- Available sizes as JSON array
-    (SELECT jsonb_agg(DISTINCT jsonb_build_object(''id'', s.sizeid, ''name'', s.sizename) ORDER BY jsonb_build_object(''id'', s.sizeid, ''name'', s.sizename))
-     FROM productvariants pv
-     JOIN sizes s ON pv.sizeid = s.sizeid
-     WHERE pv.productid = p.productid AND pv.stockquantity > 0) as available_sizes,
+    (SELECT jsonb_agg(DISTINCT size_obj)
+     FROM (
+       SELECT jsonb_build_object(''id'', s.sizeid, ''name'', s.sizename) as size_obj
+       FROM productvariants pv
+       JOIN sizes s ON pv.sizeid = s.sizeid
+       WHERE pv.productid = p.productid AND pv.stockquantity > 0
+       ORDER BY s.sizename
+     ) sizes_subq) as available_sizes,
     
     -- Available colors as JSON array
-    (SELECT jsonb_agg(DISTINCT jsonb_build_object(''id'', co.colorid, ''name'', co.colorname, ''hex'', co.hexcode) ORDER BY jsonb_build_object(''id'', co.colorid, ''name'', co.colorname, ''hex'', co.hexcode))
-     FROM productvariants pv
-     JOIN colors co ON pv.colorid = co.colorid
-     WHERE pv.productid = p.productid AND pv.stockquantity > 0) as available_colors,
+    (SELECT jsonb_agg(DISTINCT color_obj)
+     FROM (
+       SELECT jsonb_build_object(''id'', co.colorid, ''name'', co.colorname, ''hex'', co.hexcode) as color_obj
+       FROM productvariants pv
+       JOIN colors co ON pv.colorid = co.colorid
+       WHERE pv.productid = p.productid AND pv.stockquantity > 0
+       ORDER BY co.colorname
+     ) colors_subq) as available_colors,
     
     -- All variants with stock info
     (SELECT jsonb_agg(
