@@ -4,19 +4,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter
 import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { ScrollArea } from "./ui/scroll-area";
-import type { Product } from "./ProductCard";
+import type { CartItem } from "./types";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
-
-export interface CartItem extends Product {
-  quantity: number;
-  selectedSize?: string;
-  selectedColor?: string;
-}
 
 interface ShoppingCartProps {
   items: CartItem[];
-  onUpdateQuantity: (id: number, delta: number) => void;
-  onRemoveItem: (id: number) => void;
+  onUpdateQuantity: (index: number, delta: number) => void;
+  onRemoveItem: (index: number) => void;
   onCheckout: () => void;
 }
 
@@ -26,13 +20,15 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
 
   return (
     <Sheet>
-      <SheetTrigger className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md h-9 px-4 py-2 border bg-background text-foreground hover:bg-accent hover:text-accent-foreground transition-all relative">
-        <ShoppingCart className="h-5 w-5" />
-        {totalItems > 0 && (
-          <Badge className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center">
-            {totalItems}
-          </Badge>
-        )}
+      <SheetTrigger asChild>
+        <Button variant="outline" className="relative">
+          <ShoppingCart className="h-5 w-5" />
+          {totalItems > 0 && (
+            <Badge className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center">
+              {totalItems}
+            </Badge>
+          )}
+        </Button>
       </SheetTrigger>
       <SheetContent className="w-full sm:max-w-lg flex flex-col">
         <SheetHeader>
@@ -48,8 +44,8 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
           <>
             <ScrollArea className="flex-1 -mx-6 px-6">
               <div className="space-y-4 py-4">
-                {items.map((item) => (
-                  <div key={item.id} className="flex gap-4">
+                {items.map((item, index) => (
+                  <div key={`${item.id}-${item.variantId}-${index}`} className="flex gap-4">
                     <div className="w-20 h-20 rounded-md overflow-hidden bg-gray-100 flex-shrink-0">
                       <ImageWithFallback
                         src={item.image}
@@ -58,29 +54,33 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="mb-1">{item.name}</h4>
-                      <p className="text-gray-600 text-sm">${item.price.toFixed(2)}</p>
+                      <h4 className="font-semibold mb-1">{item.name}</h4>
+                      <p className="text-gray-600 text-sm font-medium">${item.price.toFixed(2)}</p>
                       {item.selectedSize && (
                         <p className="text-gray-500 text-xs">Size: {item.selectedSize}</p>
                       )}
                       {item.selectedColor && (
                         <p className="text-gray-500 text-xs">Color: {item.selectedColor}</p>
                       )}
+                      {item.maxStock && item.maxStock < 999 && (
+                        <p className="text-gray-400 text-xs">Only {item.maxStock} available</p>
+                      )}
                       <div className="flex items-center gap-2 mt-2">
                         <Button
                           variant="outline"
                           size="icon"
                           className="h-7 w-7"
-                          onClick={() => onUpdateQuantity(item.id, -1)}
+                          onClick={() => onUpdateQuantity(index, -1)}
                         >
                           <Minus className="h-3 w-3" />
                         </Button>
-                        <span className="w-8 text-center">{item.quantity}</span>
+                        <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
                         <Button
                           variant="outline"
                           size="icon"
                           className="h-7 w-7"
-                          onClick={() => onUpdateQuantity(item.id, 1)}
+                          onClick={() => onUpdateQuantity(index, 1)}
+                          disabled={item.maxStock ? item.quantity >= item.maxStock : false}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
@@ -88,7 +88,7 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7 ml-auto"
-                          onClick={() => onRemoveItem(item.id)}
+                          onClick={() => onRemoveItem(index)}
                         >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
@@ -102,16 +102,16 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
             <div className="space-y-4 pt-4">
               <Separator />
               <div className="space-y-2">
-                <div className="flex justify-between">
+                <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Subtotal</span>
-                  <span>${totalPrice.toFixed(2)}</span>
+                  <span className="font-medium">${totalPrice.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Shipping</span>
-                  <span>FREE</span>
+                  <span className="font-medium text-green-600">FREE</span>
                 </div>
                 <Separator />
-                <div className="flex justify-between">
+                <div className="flex justify-between text-lg font-bold">
                   <span>Total</span>
                   <span>${totalPrice.toFixed(2)}</span>
                 </div>

@@ -1,14 +1,14 @@
-// lib/supabaseClient.js
-import { createClient } from '@supabase/supabase-js'
+// lib/initSupabase.ts
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+// Vite uses import.meta.env, not process.env
+// And Vite requires VITE_ prefix, not NEXT_PUBLIC_
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey)
 
-
-
-// Usage
+// Usage Examples
 // Example usage of Supabase client to access your tables.
 
 /*
@@ -22,6 +22,7 @@ const { data: categories, error } = await supabase
   .from('categories')
   .select('*');
 */
+
 /*
   2. Filter Rows With a Condition
   --------------------------------
@@ -34,6 +35,7 @@ const { data: products, error } = await supabase
   .select('*')
   .eq('categoryid', categoryId);
 */
+
 /*
   3. Fetch a Specific Row by Primary Key
   --------------------------------------
@@ -47,6 +49,7 @@ const { data: customer, error } = await supabase
   .eq('customerid', customerId)
   .single();
 */
+
 /*
   4. Joining Related Tables
   -------------------------
@@ -61,8 +64,19 @@ const { data: productsWithImages, error } = await supabase
     images(*)
   `);
 */
+
 /*
-  5. Inserting a New Row
+  5. Calling Postgres Functions
+  ------------------------------
+  To call the get_products_with_variants() function:
+*/
+/*
+const { data: products, error } = await supabase
+  .rpc('get_products_with_variants');
+*/
+
+/*
+  6. Inserting a New Row
   ----------------------
   To insert a new order:
 */
@@ -76,8 +90,9 @@ const { data: insertedOrder, error } = await supabase
   .from('orders')
   .insert([newOrder]);
 */
+
 /*
-  6. Updating Row Data
+  7. Updating Row Data
   ----------------------
   To update a customer's last_login timestamp:
 */
@@ -87,8 +102,9 @@ const { data: updatedCustomer, error } = await supabase
   .update({ last_login: new Date().toISOString() })
   .eq('customerid', customerId);
 */
+
 /*
-  7. Deleting a Row
+  8. Deleting a Row
   ----------------------
   To delete a wishlist by wishlistid:
 */
@@ -97,5 +113,5 @@ const { data: deletedWishlist, error } = await supabase
   .from('wishlist')
   .delete()
   .eq('wishlistid', 'uuid...');
-
 */
+

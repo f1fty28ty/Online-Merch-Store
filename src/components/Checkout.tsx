@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, CreditCard, MapPin, User, Check } from "lucide-react";
+import { ArrowLeft, CreditCard, MapPin, User, Check, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -7,9 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Separator } from "./ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
-import type { CartItem } from "./ShoppingCart";
+import type { CartItem } from "./types";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { toast } from "sonner";
+import { supabase } from "../../lib/initSupabase";
 
 interface CheckoutProps {
   items: CartItem[];
@@ -20,8 +21,8 @@ interface CheckoutProps {
 export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [paymentMethod, setPaymentMethod] = useState("card");
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  // Form state
   const [customerInfo, setCustomerInfo] = useState({
     firstName: "",
     lastName: "",
@@ -45,12 +46,11 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
   });
 
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const shipping: number = 0; // Free shipping
-  const tax = subtotal * 0.08; // 8% tax
+  const shipping: number = 0;
+  const tax = subtotal * 0.08;
   const total = subtotal + shipping + tax;
 
-  const handleSubmitCustomerInfo = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitCustomerInfo = () => {
     if (!customerInfo.firstName || !customerInfo.lastName || !customerInfo.email) {
       toast.error("Please fill in all required fields");
       return;
@@ -58,8 +58,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     setStep(2);
   };
 
-  const handleSubmitShippingInfo = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitShippingInfo = () => {
     if (!shippingInfo.address || !shippingInfo.city || !shippingInfo.state || !shippingInfo.zipCode) {
       toast.error("Please fill in all required fields");
       return;
@@ -67,41 +66,163 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     setStep(3);
   };
 
-  const handleSubmitPayment = (e: React.FormEvent) => {
-    e.preventDefault();
+  const validateStock = async () => {
+    try {
+      for (const item of items) {
+        if (!item.variantId) {
+          return { valid: false, message: `${item.name} is missing variant information` };
+        }
+
+        const { data, error } = await supabase
+          .from('ProductVariants')
+          .select('stockQuantity, inStock')
+          .eq('variantId', item.variantId)
+          .single();
+
+        if (error) {
+          console.error('Stock validation error:', error);
+          return { valid: false, message: `Could not verify stock for ${item.name}` };
+        }
+
+        if (!data.inStock || data.stockQuantity < item.quantity) {
+          return { 
+            valid: false, 
+            message: `${item.name} only has ${data.stockQuantity} available (you requested ${item.quantity})` 
+          };
+        }
+      }
+
+      return { valid: true };
+    } catch (error) {
+      console.error('Stock validation error:', error);
+      return { valid: false, message: 'Failed to validate stock' };
+    }
+  };
+
+  const createCustomer = async () => {
+    try {
+      const fullName = `${customerInfo.firstName} ${customerInfo.lastName}`;
+      const shippingAddress = `${shippingInfo.address}, ${shippingInfo.city}, ${shippingInfo.state} ${shippingInfo.zipCode}, ${shippingInfo.country}`;
+      
+      const tempPassword = 'temp_' + Math.random().toString(36).substring(7);
+
+      const { data, error } = await supabase
+        .rpc('add_customer_with_cycling', {
+          p_email: customerInfo.email,
+          p_customerpasswd: tempPassword,
+          p_customername: fullName,
+          p_phonenum: customerInfo.phone || null,
+          p_shippingaddress: shippingAddress,
+          p_billingaddress: shippingAddress,
+        });
+
+      if (error) {
+        console.error('Customer creation error:', error);
+        return null;
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Customer creation error:', error);
+      return null;
+    }
+  };
+
+  const createOrder = async (customerId: string) => {
+    try {
+      const shippingAddress = `${shippingInfo.address}, ${shippingInfo.city}, ${shippingInfo.state} ${shippingInfo.zipCode}, ${shippingInfo.country}`;
+      
+      const orderItems = items.map(item => ({
+        variantId: item.variantId,
+        quantity: item.quantity,
+      }));
+
+      const { data, error } = await supabase
+        .rpc('create_order_with_variants', {
+          p_customerid: customerId,
+          p_items: orderItems,
+          p_shipping_address: shippingAddress,
+          p_shipping_cost: shipping,
+        });
+
+      if (error) {
+        console.error('Order creation error:', error);
+        return null;
+      }
+
+      if (data) {
+        await supabase.rpc('update_order_status', {
+          p_orderid: data,
+          p_status: 'paid',
+        });
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Order creation error:', error);
+      return null;
+    }
+  };
+
+  const handleSubmitPayment = async () => {
     if (paymentMethod === "card" && (!paymentInfo.cardNumber || !paymentInfo.cardName || !paymentInfo.expiryDate || !paymentInfo.cvv)) {
       toast.error("Please fill in all payment details");
       return;
     }
 
-    // Simulate order processing
-    toast.success("Order placed successfully!");
-    setTimeout(() => {
-      onOrderComplete();
-    }, 1500);
+    setIsProcessing(true);
+
+    try {
+      const stockValidation = await validateStock();
+      if (!stockValidation.valid) {
+        toast.error(stockValidation.message || "Some items are out of stock");
+        setIsProcessing(false);
+        return;
+      }
+
+      const customerId = await createCustomer();
+      if (!customerId) {
+        toast.error("Failed to create customer account");
+        setIsProcessing(false);
+        return;
+      }
+
+      const orderId = await createOrder(customerId);
+      if (!orderId) {
+        toast.error("Failed to create order");
+        setIsProcessing(false);
+        return;
+      }
+
+      toast.success("Order placed successfully!");
+      setTimeout(() => {
+        onOrderComplete();
+      }, 1500);
+
+    } catch (error) {
+      console.error("Checkout error:", error);
+      toast.error("An error occurred while processing your order");
+      setIsProcessing(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <header className="bg-white border-b sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" onClick={onBack}>
+            <Button variant="ghost" onClick={onBack} disabled={isProcessing}>
               <ArrowLeft className="h-5 w-5 mr-2" />
               Back to Store
             </Button>
-            <h1>Checkout</h1>
+            <h1 className="text-xl font-bold">Checkout</h1>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Checkout Form */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Progress Indicator */}
             <div className="flex items-center justify-between mb-8">
               {[
                 { num: 1, label: "Information", icon: User },
@@ -110,301 +231,167 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
               ].map((s, idx) => (
                 <div key={s.num} className="flex items-center flex-1">
                   <div className="flex flex-col items-center flex-1">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 transition-colors ${
-                        step >= s.num
-                          ? "bg-black text-white"
-                          : "bg-gray-200 text-gray-400"
-                      }`}
-                    >
-                      {step > s.num ? (
-                        <Check className="h-5 w-5" />
-                      ) : (
-                        <s.icon className="h-5 w-5" />
-                      )}
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 transition-colors ${step >= s.num ? "bg-black text-white" : "bg-gray-200 text-gray-400"}`}>
+                      {step > s.num ? <Check className="h-5 w-5" /> : <s.icon className="h-5 w-5" />}
                     </div>
                     <span className="text-xs text-center hidden sm:block">{s.label}</span>
                   </div>
-                  {idx < 2 && (
-                    <div
-                      className={`h-0.5 flex-1 mx-2 transition-colors ${
-                        step > s.num ? "bg-black" : "bg-gray-200"
-                      }`}
-                    />
-                  )}
+                  {idx < 2 && <div className={`h-0.5 flex-1 mx-2 transition-colors ${step > s.num ? "bg-black" : "bg-gray-200"}`} />}
                 </div>
               ))}
             </div>
 
-            {/* Step 1: Customer Information */}
             {step === 1 && (
               <Card>
                 <CardHeader>
                   <CardTitle>Contact Information</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleSubmitCustomerInfo} className="space-y-4">
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="firstName">First Name *</Label>
-                        <Input
-                          id="firstName"
-                          value={customerInfo.firstName}
-                          onChange={(e) =>
-                            setCustomerInfo({ ...customerInfo, firstName: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="lastName">Last Name *</Label>
-                        <Input
-                          id="lastName"
-                          value={customerInfo.lastName}
-                          onChange={(e) =>
-                            setCustomerInfo({ ...customerInfo, lastName: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
+                <CardContent className="space-y-4">
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName">First Name *</Label>
+                      <Input id="firstName" value={customerInfo.firstName} onChange={(e) => setCustomerInfo({ ...customerInfo, firstName: e.target.value })} />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="email">Email Address *</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={customerInfo.email}
-                        onChange={(e) =>
-                          setCustomerInfo({ ...customerInfo, email: e.target.value })
-                        }
-                        required
-                      />
+                      <Label htmlFor="lastName">Last Name *</Label>
+                      <Input id="lastName" value={customerInfo.lastName} onChange={(e) => setCustomerInfo({ ...customerInfo, lastName: e.target.value })} />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="phone">Phone Number</Label>
-                      <Input
-                        id="phone"
-                        type="tel"
-                        value={customerInfo.phone}
-                        onChange={(e) =>
-                          setCustomerInfo({ ...customerInfo, phone: e.target.value })
-                        }
-                      />
-                    </div>
-                    <Button type="submit" className="w-full" size="lg">
-                      Continue to Shipping
-                    </Button>
-                  </form>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email Address *</Label>
+                    <Input id="email" type="email" value={customerInfo.email} onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone Number</Label>
+                    <Input id="phone" type="tel" value={customerInfo.phone} onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })} />
+                  </div>
+                  <Button onClick={handleSubmitCustomerInfo} className="w-full" size="lg">Continue to Shipping</Button>
                 </CardContent>
               </Card>
             )}
 
-            {/* Step 2: Shipping Information */}
             {step === 2 && (
               <Card>
                 <CardHeader>
                   <CardTitle>Shipping Address</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleSubmitShippingInfo} className="space-y-4">
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="address">Street Address *</Label>
+                    <Input id="address" value={shippingInfo.address} onChange={(e) => setShippingInfo({ ...shippingInfo, address: e.target.value })} />
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="address">Street Address *</Label>
-                      <Input
-                        id="address"
-                        value={shippingInfo.address}
-                        onChange={(e) =>
-                          setShippingInfo({ ...shippingInfo, address: e.target.value })
-                        }
-                        required
-                      />
+                      <Label htmlFor="city">City *</Label>
+                      <Input id="city" value={shippingInfo.city} onChange={(e) => setShippingInfo({ ...shippingInfo, city: e.target.value })} />
                     </div>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="city">City *</Label>
-                        <Input
-                          id="city"
-                          value={shippingInfo.city}
-                          onChange={(e) =>
-                            setShippingInfo({ ...shippingInfo, city: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="state">State *</Label>
-                        <Input
-                          id="state"
-                          value={shippingInfo.state}
-                          onChange={(e) =>
-                            setShippingInfo({ ...shippingInfo, state: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="state">State *</Label>
+                      <Input id="state" value={shippingInfo.state} onChange={(e) => setShippingInfo({ ...shippingInfo, state: e.target.value })} />
                     </div>
-                    <div className="grid sm:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="zipCode">ZIP Code *</Label>
-                        <Input
-                          id="zipCode"
-                          value={shippingInfo.zipCode}
-                          onChange={(e) =>
-                            setShippingInfo({ ...shippingInfo, zipCode: e.target.value })
-                          }
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="country">Country *</Label>
-                        <Select
-                          value={shippingInfo.country}
-                          onValueChange={(value: string) =>
-                            setShippingInfo({ ...shippingInfo, country: value })
-                          }
-                        >
-                          <SelectTrigger id="country">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="United States">United States</SelectItem>
-                            <SelectItem value="Canada">Canada</SelectItem>
-                            <SelectItem value="United Kingdom">United Kingdom</SelectItem>
-                            <SelectItem value="Australia">Australia</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="zipCode">ZIP Code *</Label>
+                      <Input id="zipCode" value={shippingInfo.zipCode} onChange={(e) => setShippingInfo({ ...shippingInfo, zipCode: e.target.value })} />
                     </div>
-                    <div className="flex gap-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="flex-1"
-                        onClick={() => setStep(1)}
-                      >
-                        Back
-                      </Button>
-                      <Button type="submit" className="flex-1" size="lg">
-                        Continue to Payment
-                      </Button>
+                    <div className="space-y-2">
+                      <Label htmlFor="country">Country *</Label>
+                      <Select value={shippingInfo.country} onValueChange={(value: string) => setShippingInfo({ ...shippingInfo, country: value })}>
+                        <SelectTrigger id="country">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="United States">United States</SelectItem>
+                          <SelectItem value="Canada">Canada</SelectItem>
+                          <SelectItem value="United Kingdom">United Kingdom</SelectItem>
+                          <SelectItem value="Australia">Australia</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </form>
+                  </div>
+                  <div className="flex gap-4">
+                    <Button variant="outline" className="flex-1" onClick={() => setStep(1)}>Back</Button>
+                    <Button onClick={handleSubmitShippingInfo} className="flex-1" size="lg">Continue to Payment</Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
 
-            {/* Step 3: Payment Information */}
             {step === 3 && (
               <Card>
                 <CardHeader>
                   <CardTitle>Payment Method</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleSubmitPayment} className="space-y-4">
-                    <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod}>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="card" id="card" />
-                        <Label htmlFor="card" className="cursor-pointer">Credit/Debit Card</Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="paypal" id="paypal" />
-                        <Label htmlFor="paypal" className="cursor-pointer">PayPal</Label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="apple-pay" id="apple-pay" />
-                        <Label htmlFor="apple-pay" className="cursor-pointer">Apple Pay</Label>
-                      </div>
-                    </RadioGroup>
-
-                    {paymentMethod === "card" && (
-                      <div className="space-y-4 pt-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="cardNumber">Card Number *</Label>
-                          <Input
-                            id="cardNumber"
-                            placeholder="1234 5678 9012 3456"
-                            value={paymentInfo.cardNumber}
-                            onChange={(e) =>
-                              setPaymentInfo({ ...paymentInfo, cardNumber: e.target.value })
-                            }
-                            maxLength={19}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="cardName">Cardholder Name *</Label>
-                          <Input
-                            id="cardName"
-                            placeholder="John Doe"
-                            value={paymentInfo.cardName}
-                            onChange={(e) =>
-                              setPaymentInfo({ ...paymentInfo, cardName: e.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="expiryDate">Expiry Date *</Label>
-                            <Input
-                              id="expiryDate"
-                              placeholder="MM/YY"
-                              value={paymentInfo.expiryDate}
-                              onChange={(e) =>
-                                setPaymentInfo({ ...paymentInfo, expiryDate: e.target.value })
-                              }
-                              maxLength={5}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="cvv">CVV *</Label>
-                            <Input
-                              id="cvv"
-                              placeholder="123"
-                              value={paymentInfo.cvv}
-                              onChange={(e) =>
-                                setPaymentInfo({ ...paymentInfo, cvv: e.target.value })
-                              }
-                              maxLength={4}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {paymentMethod === "paypal" && (
-                      <div className="bg-gray-50 p-4 rounded-lg text-center">
-                        <p className="text-sm text-gray-600">
-                          You will be redirected to PayPal to complete your purchase.
-                        </p>
-                      </div>
-                    )}
-
-                    {paymentMethod === "apple-pay" && (
-                      <div className="bg-gray-50 p-4 rounded-lg text-center">
-                        <p className="text-sm text-gray-600">
-                          You will be prompted to authorize payment with Apple Pay.
-                        </p>
-                      </div>
-                    )}
-
-                    <div className="flex gap-4 pt-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="flex-1"
-                        onClick={() => setStep(2)}
-                      >
-                        Back
-                      </Button>
-                      <Button type="submit" className="flex-1" size="lg">
-                        Place Order ${total.toFixed(2)}
-                      </Button>
+                <CardContent className="space-y-4">
+                  <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod}>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="card" id="card" />
+                      <Label htmlFor="card" className="cursor-pointer">Credit/Debit Card</Label>
                     </div>
-                  </form>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="paypal" id="paypal" />
+                      <Label htmlFor="paypal" className="cursor-pointer">PayPal</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="apple-pay" id="apple-pay" />
+                      <Label htmlFor="apple-pay" className="cursor-pointer">Apple Pay</Label>
+                    </div>
+                  </RadioGroup>
+
+                  {paymentMethod === "card" && (
+                    <div className="space-y-4 pt-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="cardNumber">Card Number *</Label>
+                        <Input id="cardNumber" placeholder="1234 5678 9012 3456" value={paymentInfo.cardNumber} onChange={(e) => setPaymentInfo({ ...paymentInfo, cardNumber: e.target.value })} maxLength={19} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="cardName">Cardholder Name *</Label>
+                        <Input id="cardName" placeholder="John Doe" value={paymentInfo.cardName} onChange={(e) => setPaymentInfo({ ...paymentInfo, cardName: e.target.value })} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="expiryDate">Expiry Date *</Label>
+                          <Input id="expiryDate" placeholder="MM/YY" value={paymentInfo.expiryDate} onChange={(e) => setPaymentInfo({ ...paymentInfo, expiryDate: e.target.value })} maxLength={5} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="cvv">CVV *</Label>
+                          <Input id="cvv" placeholder="123" value={paymentInfo.cvv} onChange={(e) => setPaymentInfo({ ...paymentInfo, cvv: e.target.value })} maxLength={4} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentMethod === "paypal" && (
+                    <div className="bg-gray-50 p-4 rounded-lg text-center">
+                      <p className="text-sm text-gray-600">You will be redirected to PayPal to complete your purchase.</p>
+                    </div>
+                  )}
+
+                  {paymentMethod === "apple-pay" && (
+                    <div className="bg-gray-50 p-4 rounded-lg text-center">
+                      <p className="text-sm text-gray-600">You will be prompted to authorize payment with Apple Pay.</p>
+                    </div>
+                  )}
+
+                  <div className="flex gap-4 pt-4">
+                    <Button variant="outline" className="flex-1" onClick={() => setStep(2)} disabled={isProcessing}>Back</Button>
+                    <Button onClick={handleSubmitPayment} className="flex-1" size="lg" disabled={isProcessing}>
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        `Place Order $${total.toFixed(2)}`
+                      )}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             )}
           </div>
 
-          {/* Order Summary */}
           <div className="lg:col-span-1">
             <Card className="sticky top-24">
               <CardHeader>
@@ -412,27 +399,17 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-3">
-                  {items.map((item) => (
-                    <div key={item.id} className="flex gap-3">
+                  {items.map((item, idx) => (
+                    <div key={`${item.id}-${item.variantId}-${idx}`} className="flex gap-3">
                       <div className="relative w-16 h-16 rounded-md overflow-hidden bg-gray-100 flex-shrink-0">
-                        <ImageWithFallback
-                          src={item.image}
-                          alt={item.name}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute -top-2 -right-2 bg-gray-800 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                          {item.quantity}
-                        </div>
+                        <ImageWithFallback src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                        <div className="absolute -top-2 -right-2 bg-gray-800 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{item.quantity}</div>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate">{item.name}</p>
-                        {item.selectedSize && (
-                          <p className="text-xs text-gray-500">Size: {item.selectedSize}</p>
-                        )}
-                        {item.selectedColor && (
-                          <p className="text-xs text-gray-500">Color: {item.selectedColor}</p>
-                        )}
-                        <p className="text-sm">${(item.price * item.quantity).toFixed(2)}</p>
+                        <p className="text-sm font-medium truncate">{item.name}</p>
+                        {item.selectedSize && <p className="text-xs text-gray-500">Size: {item.selectedSize}</p>}
+                        {item.selectedColor && <p className="text-xs text-gray-500">Color: {item.selectedColor}</p>}
+                        <p className="text-sm font-semibold mt-1">${(item.price * item.quantity).toFixed(2)}</p>
                       </div>
                     </div>
                   ))}
@@ -443,18 +420,18 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Subtotal</span>
-                    <span>${subtotal.toFixed(2)}</span>
+                    <span className="font-medium">${subtotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Shipping</span>
-                    <span>{shipping === 0 ? "FREE" : `$${shipping.toFixed(2)}`}</span>
+                    <span className="font-medium text-green-600">{shipping === 0 ? "FREE" : `$${shipping.toFixed(2)}`}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Tax</span>
-                    <span>${tax.toFixed(2)}</span>
+                    <span className="font-medium">${tax.toFixed(2)}</span>
                   </div>
                   <Separator />
-                  <div className="flex justify-between">
+                  <div className="flex justify-between text-lg font-bold">
                     <span>Total</span>
                     <span>${total.toFixed(2)}</span>
                   </div>
