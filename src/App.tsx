@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ProductCard } from "./components/ProductCard";
-import type { Product, CartItem } from "../types";
+import type { Product, CartItem, ProductVariant } from "./types";
 import { ShoppingCartComponent } from "./components/ShoppingCart";
 import { ProductDetail } from "./components/ProductDetail";
 import { Checkout } from "./components/Checkout";
@@ -82,7 +82,7 @@ export default function App() {
     let variantPrice = product.price;
 
     if (product.variants && product.variants.length > 0) {
-      const variant = product.variants.find(v => {
+      const variant = product.variants.find((v: ProductVariant) => {
         const sizeMatch = !size || v.size === size;
         const colorMatch = !color || v.color === color;
         return sizeMatch && colorMatch;
