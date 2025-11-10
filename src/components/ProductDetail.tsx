@@ -72,7 +72,7 @@ export function ProductDetail({ product, open, onClose, onAddToCart }: ProductDe
         product.variants
           .filter(v => v.size === selectedSize && v.inStock)
           .map(v => v.color)
-          .filter(Boolean)
+          .filter((color): color is string => color !== null && color !== undefined)
       ))
     : product.colors;
 
@@ -82,7 +82,7 @@ export function ProductDetail({ product, open, onClose, onAddToCart }: ProductDe
         product.variants
           .filter(v => v.color === selectedColor && v.inStock)
           .map(v => v.size)
-          .filter(Boolean)
+          .filter((size): size is string => size !== null && size !== undefined)
       ))
     : product.sizes;
 
