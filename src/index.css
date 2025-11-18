@@ -2490,3 +2490,56 @@ html {
     transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0) scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1)) rotate(var(--tw-exit-rotate, 0));
   }
 }
+
+
+/* Add this to your src/index.css or create a new print.css */
+
+@media print {
+  /* Hide elements that shouldn't print */
+  .print\:hidden,
+  header,
+  button,
+  [role="button"] {
+    display: none !important;
+  }
+
+  /* Remove shadows and borders for cleaner print */
+  .print\:shadow-none {
+    box-shadow: none !important;
+  }
+
+  /* Ensure white background */
+  body {
+    background: white !important;
+  }
+
+  /* Remove page breaks inside cards */
+  .print\:break-inside-avoid {
+    break-inside: avoid;
+  }
+
+  /* Adjust spacing for print */
+  .print\:mt-4 {
+    margin-top: 1rem !important;
+  }
+
+  /* Make text black for better print */
+  * {
+    color: black !important;
+  }
+
+  /* Keep specific colors for badges */
+  .bg-green-100 {
+    background-color: #dcfce7 !important;
+  }
+  
+  .text-green-800 {
+    color: #166534 !important;
+  }
+
+  /* Remove all animations */
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

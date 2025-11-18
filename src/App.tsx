@@ -4,6 +4,7 @@ import type { Product, CartItem, ProductVariant } from "./types";
 import { ShoppingCartComponent } from "./components/ShoppingCart";
 import { ProductDetail } from "./components/ProductDetail";
 import { Checkout } from "./components/Checkout";
+import { Receipt } from "./components/Receipt";
 import { Input } from "./components/ui/input";
 import { Search, Store } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
@@ -17,6 +18,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [isCheckoutView, setIsCheckoutView] = useState(false);
+  const [isReceiptView, setIsReceiptView] = useState(false);
+  const [completedOrderId, setCompletedOrderId] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState<string[]>(["All"]);
@@ -177,12 +180,33 @@ export default function App() {
     setIsCheckoutView(true);
   };
 
-  const handleOrderComplete = () => {
+  const handleOrderComplete = (orderId: string) => {
+    setCompletedOrderId(orderId);
     setCart([]);
     setIsCheckoutView(false);
+    setIsReceiptView(true);
     // Refresh products to update stock
     fetchProducts();
   };
+
+  const handleBackToStore = () => {
+    setIsReceiptView(false);
+    setIsCheckoutView(false);
+    setCompletedOrderId(null);
+  };
+
+  // Show receipt view if order completed
+  if (isReceiptView && completedOrderId) {
+    return (
+      <>
+        <Toaster />
+        <Receipt
+          orderId={completedOrderId}
+          onBackToStore={handleBackToStore}
+        />
+      </>
+    );
+  }
 
   // Show checkout view if user is checking out
   if (isCheckoutView) {

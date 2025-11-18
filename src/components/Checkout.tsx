@@ -15,7 +15,7 @@ import { supabase } from "../../lib/initSupabase";
 interface CheckoutProps {
   items: CartItem[];
   onBack: () => void;
-  onOrderComplete: () => void;
+  onOrderComplete: (orderId: string) => void;
 }
 
 // ============================================
