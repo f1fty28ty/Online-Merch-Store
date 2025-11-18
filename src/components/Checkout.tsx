@@ -66,32 +66,38 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     setStep(3);
   };
 
+
   const validateStock = async () => {
     try {
       for (const item of items) {
         if (!item.variantId) {
           return { valid: false, message: `${item.name} is missing variant information` };
         }
-
+  
+        // Use lowercase table name for Supabase
         const { data, error } = await supabase
-          .from('ProductVariants')
-          .select('stockQuantity, inStock')
-          .eq('variantId', item.variantId)
+          .from('productvariants')  // ✅ Changed to lowercase
+          .select('stockquantity, instock')  // ✅ Changed to lowercase columns
+          .eq('variantid', item.variantId)  // ✅ Changed to lowercase
           .single();
-
+  
         if (error) {
           console.error('Stock validation error:', error);
           return { valid: false, message: `Could not verify stock for ${item.name}` };
         }
-
-        if (!data.inStock || data.stockQuantity < item.quantity) {
+  
+        if (!data) {
+          return { valid: false, message: `Variant not found for ${item.name}` };
+        }
+  
+        if (!data.instock || data.stockquantity < item.quantity) {
           return { 
             valid: false, 
-            message: `${item.name} only has ${data.stockQuantity} available (you requested ${item.quantity})` 
+            message: `${item.name} only has ${data.stockquantity} available (you requested ${item.quantity})` 
           };
         }
       }
-
+  
       return { valid: true };
     } catch (error) {
       console.error('Stock validation error:', error);

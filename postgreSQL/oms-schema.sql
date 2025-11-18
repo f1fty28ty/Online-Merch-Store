@@ -195,7 +195,7 @@ RETURNS TABLE (
   name varchar,
   description text,
   baseprice numeric,
-  categories text[],
+  categories varchar[],
   images text[],
   available_sizes jsonb,
   available_colors jsonb,
@@ -212,7 +212,13 @@ BEGIN
     p.description,
     p.baseprice,
     ARRAY_AGG(DISTINCT c.name) FILTER (WHERE c.name IS NOT NULL) as categories,
-    ARRAY_AGG(DISTINCT i.url ORDER BY i.displayorder) FILTER (WHERE i.url IS NOT NULL) as images,
+    (SELECT ARRAY_AGG(url ORDER BY displayorder)
+     FROM (
+       SELECT DISTINCT ON (i2.url) i2.url, i2.displayorder
+       FROM images i2
+       WHERE i2.productid = p.productid
+       ORDER BY i2.url, i2.displayorder
+     ) img_subq) as images,
     
     (SELECT jsonb_agg(size_obj ORDER BY size_name)
      FROM (
