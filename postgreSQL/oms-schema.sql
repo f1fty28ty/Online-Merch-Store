@@ -271,6 +271,7 @@ END;
 $BODY$;
 
 -- Create order with variant support
+-- Drop and recreate the order function with proper case handling
 DROP FUNCTION IF EXISTS create_order_with_variants(uuid, jsonb, text, numeric);
 
 CREATE OR REPLACE FUNCTION create_order_with_variants(
@@ -290,43 +291,95 @@ DECLARE
   size_name varchar;
   color_name varchar;
   variant_price numeric;
+  current_stock int;
 BEGIN
+  -- Validate all items first and calculate subtotal
   FOR item IN SELECT * FROM jsonb_array_elements(p_items)
   LOOP
-    SELECT COALESCE(pv.price, p.baseprice)
-    INTO variant_price
-    FROM productvariants pv
-    JOIN products p ON pv.productid = p.productid
-    WHERE pv.variantid = (item->>'variantId')::uuid;
-    
-    subtotal_amt := subtotal_amt + ((item->>'quantity')::int * variant_price);
-  END LOOP;
-  
-  total_amt := subtotal_amt + p_shipping_cost;
-  
-  INSERT INTO orders (
-    customerid, subtotal, shippingcost, totalamount, 
-    shippingaddress, status
-  )
-  VALUES (
-    p_customerid, subtotal_amt, p_shipping_cost, total_amt,
-    p_shipping_address, 'pending'
-  )
-  RETURNING orderid INTO new_orderid;
-  
-  FOR item IN SELECT * FROM jsonb_array_elements(p_items)
-  LOOP
-    SELECT p.name, s.sizename, co.colorname, COALESCE(pv.price, p.baseprice)
-    INTO prod_name, size_name, color_name, variant_price
+    -- Get variant info and check stock
+    SELECT 
+      COALESCE(pv.price, p.baseprice),
+      p.name,
+      s.sizename,
+      co.colorname,
+      pv.stockquantity
+    INTO 
+      variant_price,
+      prod_name,
+      size_name,
+      color_name,
+      current_stock
     FROM productvariants pv
     JOIN products p ON pv.productid = p.productid
     LEFT JOIN sizes s ON pv.sizeid = s.sizeid
     LEFT JOIN colors co ON pv.colorid = co.colorid
     WHERE pv.variantid = (item->>'variantId')::uuid;
     
+    -- Check if variant exists
+    IF variant_price IS NULL THEN
+      RAISE EXCEPTION 'Variant not found: %', (item->>'variantId')::uuid;
+    END IF;
+    
+    -- Check stock availability
+    IF current_stock < (item->>'quantity')::int THEN
+      RAISE EXCEPTION 'Insufficient stock for %: available %, requested %', 
+        prod_name, current_stock, (item->>'quantity')::int;
+    END IF;
+    
+    subtotal_amt := subtotal_amt + ((item->>'quantity')::int * variant_price);
+  END LOOP;
+  
+  total_amt := subtotal_amt + p_shipping_cost;
+  
+  -- Create order
+  INSERT INTO orders (
+    customerid, 
+    subtotal, 
+    shippingcost, 
+    totalamount, 
+    shippingaddress, 
+    status
+  )
+  VALUES (
+    p_customerid, 
+    subtotal_amt, 
+    p_shipping_cost, 
+    total_amt,
+    p_shipping_address, 
+    'pending'
+  )
+  RETURNING orderid INTO new_orderid;
+  
+  -- Insert order items and update stock
+  FOR item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    -- Get variant details again (we could optimize this by storing earlier)
+    SELECT 
+      p.name, 
+      s.sizename, 
+      co.colorname, 
+      COALESCE(pv.price, p.baseprice)
+    INTO 
+      prod_name, 
+      size_name, 
+      color_name, 
+      variant_price
+    FROM productvariants pv
+    JOIN products p ON pv.productid = p.productid
+    LEFT JOIN sizes s ON pv.sizeid = s.sizeid
+    LEFT JOIN colors co ON pv.colorid = co.colorid
+    WHERE pv.variantid = (item->>'variantId')::uuid;
+    
+    -- Insert order item
     INSERT INTO orderitems (
-      orderid, variantid, productname, sizename, colorname, 
-      quantity, unitprice, subtotal
+      orderid, 
+      variantid, 
+      productname, 
+      sizename, 
+      colorname, 
+      quantity, 
+      unitprice, 
+      subtotal
     )
     VALUES (
       new_orderid,
@@ -339,15 +392,22 @@ BEGIN
       ((item->>'quantity')::int * variant_price)
     );
     
+    -- Update stock
     UPDATE productvariants 
-    SET stockquantity = stockquantity - (item->>'quantity')::int
+    SET 
+      stockquantity = stockquantity - (item->>'quantity')::int,
+      updated_at = NOW()
     WHERE variantid = (item->>'variantId')::uuid;
   END LOOP;
   
   RETURN new_orderid;
+  
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Re-raise the exception with details
+    RAISE EXCEPTION 'Order creation failed: %', SQLERRM;
 END;
 $BODY$;
-
 -- Get order receipt with variant details
 DROP FUNCTION IF EXISTS get_order_receipt(uuid);
 
