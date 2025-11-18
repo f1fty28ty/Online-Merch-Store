@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS Sizes (
 CREATE TABLE IF NOT EXISTS Colors (
     colorId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     colorName VARCHAR(50) NOT NULL UNIQUE,
-    hexCode VARCHAR(7),
+    hexCode VARCHAR(7), -- Optional: for displaying color swatches
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS ProductVariants (
     sizeId UUID,
     colorId UUID,
     sku VARCHAR(100) UNIQUE,
-    price DECIMAL(10,2),
+    price DECIMAL(10,2), -- Override base price if needed
     stockQuantity INT DEFAULT 0,
     inStock BOOLEAN GENERATED ALWAYS AS (stockQuantity > 0) STORED,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS ProductVariants (
     FOREIGN KEY (productId) REFERENCES Products(productId) ON DELETE CASCADE,
     FOREIGN KEY (sizeId) REFERENCES Sizes(sizeId),
     FOREIGN KEY (colorId) REFERENCES Colors(colorId),
-    UNIQUE (productId, sizeId, colorId)
+    UNIQUE (productId, sizeId, colorId) -- Prevent duplicate variants
 );
 
 CREATE INDEX IF NOT EXISTS idx_variants_product ON ProductVariants(productId);
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS ProductCategories (
 CREATE TABLE IF NOT EXISTS Images (
     imageId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     productId UUID NOT NULL,
-    colorId UUID,
+    colorId UUID, -- Optional: associate image with specific color
     url TEXT NOT NULL,
     displayOrder INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS OrderItems (
 -- SEED DATA FOR VARIANTS
 -- ============================================
 
+-- Insert standard sizes
 INSERT INTO Sizes (sizeName, sortOrder) VALUES
     ('XS', 1),
     ('S', 2),
@@ -172,6 +173,7 @@ INSERT INTO Sizes (sizeName, sortOrder) VALUES
     ('One Size', 7)
 ON CONFLICT (sizeName) DO NOTHING;
 
+-- Insert standard colors with hex codes
 INSERT INTO Colors (colorName, hexCode) VALUES
     ('Black', '#000000'),
     ('White', '#FFFFFF'),
@@ -203,7 +205,7 @@ RETURNS TABLE (
   in_stock boolean
 )
 LANGUAGE plpgsql
-AS $BODY$
+AS $$
 BEGIN
   RETURN QUERY
   SELECT 
@@ -214,6 +216,7 @@ BEGIN
     ARRAY_AGG(DISTINCT c.name) FILTER (WHERE c.name IS NOT NULL) as categories,
     ARRAY_AGG(DISTINCT i.url ORDER BY i.displayorder) FILTER (WHERE i.url IS NOT NULL) as images,
     
+    -- Fixed: Available sizes as JSON array
     (SELECT jsonb_agg(size_obj ORDER BY size_name)
      FROM (
        SELECT DISTINCT ON (s.sizeid)
@@ -224,6 +227,7 @@ BEGIN
        WHERE pv.productid = p.productid AND pv.stockquantity > 0
      ) sizes_subq) as available_sizes,
     
+    -- Fixed: Available colors as JSON array
     (SELECT jsonb_agg(color_obj ORDER BY color_name)
      FROM (
        SELECT DISTINCT ON (co.colorid)
@@ -234,6 +238,7 @@ BEGIN
        WHERE pv.productid = p.productid AND pv.stockquantity > 0
      ) colors_subq) as available_colors,
     
+    -- All variants with stock info
     (SELECT jsonb_agg(
       jsonb_build_object(
         'variantId', pv.variantid,
@@ -250,6 +255,7 @@ BEGIN
      LEFT JOIN colors co ON pv.colorid = co.colorid
      WHERE pv.productid = p.productid) as variants,
     
+    -- Product is in stock if any variant has stock
     EXISTS(
       SELECT 1 FROM productvariants pv2 
       WHERE pv2.productid = p.productid AND pv2.stockquantity > 0
@@ -262,11 +268,8 @@ BEGIN
   WHERE p.deleted_at IS NULL
   GROUP BY p.productid;
 END;
-$BODY$;
-
+$$;
 -- Create order with variant support
-DROP FUNCTION IF EXISTS create_order_with_variants(uuid, jsonb, text, numeric);
-
 CREATE OR REPLACE FUNCTION create_order_with_variants(
   p_customerid uuid,
   p_items jsonb,
@@ -274,7 +277,7 @@ CREATE OR REPLACE FUNCTION create_order_with_variants(
   p_shipping_cost numeric DEFAULT 0
 ) RETURNS uuid
 LANGUAGE plpgsql
-AS $BODY$
+AS $$
 DECLARE
   new_orderid uuid;
   subtotal_amt numeric := 0;
@@ -285,29 +288,32 @@ DECLARE
   color_name varchar;
   variant_price numeric;
 BEGIN
+  -- Calculate subtotal
   FOR item IN SELECT * FROM jsonb_array_elements(p_items)
   LOOP
     SELECT COALESCE(pv.price, p.baseprice)
     INTO variant_price
     FROM productvariants pv
     JOIN products p ON pv.productid = p.productid
-    WHERE pv.variantid = (item->>'variantId')::uuid;
+    WHERE pv.variantid = (item->>''variantId'')::uuid;
     
-    subtotal_amt := subtotal_amt + ((item->>'quantity')::int * variant_price);
+    subtotal_amt := subtotal_amt + ((item->>''quantity'')::int * variant_price);
   END LOOP;
   
   total_amt := subtotal_amt + p_shipping_cost;
   
+  -- Create order
   INSERT INTO orders (
     customerid, subtotal, shippingcost, totalamount, 
     shippingaddress, status
   )
   VALUES (
     p_customerid, subtotal_amt, p_shipping_cost, total_amt,
-    p_shipping_address, 'pending'
+    p_shipping_address, ''pending''
   )
   RETURNING orderid INTO new_orderid;
   
+  -- Insert order items
   FOR item IN SELECT * FROM jsonb_array_elements(p_items)
   LOOP
     SELECT p.name, s.sizename, co.colorname, COALESCE(pv.price, p.baseprice)
@@ -316,7 +322,7 @@ BEGIN
     JOIN products p ON pv.productid = p.productid
     LEFT JOIN sizes s ON pv.sizeid = s.sizeid
     LEFT JOIN colors co ON pv.colorid = co.colorid
-    WHERE pv.variantid = (item->>'variantId')::uuid;
+    WHERE pv.variantid = (item->>''variantId'')::uuid;
     
     INSERT INTO orderitems (
       orderid, variantid, productname, sizename, colorname, 
@@ -324,27 +330,26 @@ BEGIN
     )
     VALUES (
       new_orderid,
-      (item->>'variantId')::uuid,
+      (item->>''variantId'')::uuid,
       prod_name,
       size_name,
       color_name,
-      (item->>'quantity')::int,
+      (item->>''quantity'')::int,
       variant_price,
-      ((item->>'quantity')::int * variant_price)
+      ((item->>''quantity'')::int * variant_price)
     );
     
+    -- Update stock
     UPDATE productvariants 
-    SET stockquantity = stockquantity - (item->>'quantity')::int
-    WHERE variantid = (item->>'variantId')::uuid;
+    SET stockquantity = stockquantity - (item->>''quantity'')::int
+    WHERE variantid = (item->>''variantId'')::uuid;
   END LOOP;
   
   RETURN new_orderid;
 END;
-$BODY$;
+$$;
 
 -- Get order receipt with variant details
-DROP FUNCTION IF EXISTS get_order_receipt(uuid);
-
 CREATE OR REPLACE FUNCTION get_order_receipt(p_orderid uuid)
 RETURNS TABLE (
   orderid uuid,
@@ -358,7 +363,7 @@ RETURNS TABLE (
   totalamount numeric
 )
 LANGUAGE plpgsql
-AS $BODY$
+AS $$
 BEGIN
   RETURN QUERY
   SELECT 
@@ -375,11 +380,9 @@ BEGIN
   JOIN customers c ON o.customerid = c.customerid
   WHERE o.orderid = p_orderid;
 END;
-$BODY$;
+$$;
 
 -- Get order items with variant details
-DROP FUNCTION IF EXISTS get_order_items_with_variants(uuid);
-
 CREATE OR REPLACE FUNCTION get_order_items_with_variants(p_orderid uuid)
 RETURNS TABLE (
   productname varchar,
@@ -390,7 +393,7 @@ RETURNS TABLE (
   subtotal numeric
 )
 LANGUAGE plpgsql
-AS $BODY$
+AS $$
 BEGIN
   RETURN QUERY
   SELECT 
@@ -403,11 +406,9 @@ BEGIN
   FROM orderitems oi
   WHERE oi.orderid = p_orderid;
 END;
-$BODY$;
+$$;
 
--- Customer cycling functions
-DROP FUNCTION IF EXISTS add_customer_with_cycling(varchar, text, varchar, varchar, text, text);
-
+-- Customer cycling functions (unchanged)
 CREATE OR REPLACE FUNCTION add_customer_with_cycling(
   p_email varchar,
   p_customerpasswd text,
@@ -417,7 +418,7 @@ CREATE OR REPLACE FUNCTION add_customer_with_cycling(
   p_billingaddress text DEFAULT NULL
 ) RETURNS uuid
 LANGUAGE plpgsql
-AS $BODY$
+AS $$
 DECLARE
   new_customer_id uuid;
   current_count int;
@@ -455,19 +456,17 @@ BEGIN
   
   RETURN new_customer_id;
 END;
-$BODY$;
-
-DROP FUNCTION IF EXISTS update_order_status(uuid, order_status);
+$$;
 
 CREATE OR REPLACE FUNCTION update_order_status(
   p_orderid uuid,
   p_status order_status
 ) RETURNS void
 LANGUAGE plpgsql
-AS $BODY$
+AS $$
 BEGIN
   UPDATE orders 
   SET status = p_status, updated_at = NOW()
   WHERE orderid = p_orderid;
 END;
-$BODY$;
+$$;
