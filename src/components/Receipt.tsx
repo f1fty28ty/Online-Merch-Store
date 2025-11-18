@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Printer, ArrowLeft, Package, MapPin, Mail, Phone, Calendar } from "lucide-react";
+import { Check, Printer, ArrowLeft, Package, MapPin, Mail, Calendar } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Separator } from "./ui/separator";

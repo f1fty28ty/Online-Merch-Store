@@ -28,7 +28,7 @@ const isValidEmail = (email: string): boolean => {
 };
 
 const isValidPhone = (phone: string): boolean => {
-  if (!phone) return true; // Phone is optional
+  if (!phone) return true;
   const phoneRegex = /^[\d\s\-\+\(\)]+$/;
   return phoneRegex.test(phone) && phone.replace(/\D/g, '').length >= 10;
 };
@@ -140,9 +140,6 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
   const tax = subtotal * 0.08;
   const total = subtotal + shipping + tax;
 
-  // ============================================
-  // STEP 1: CUSTOMER INFO VALIDATION
-  // ============================================
   const handleSubmitCustomerInfo = () => {
     if (!customerInfo.firstName.trim()) {
       toast.error("First name is required");
@@ -179,9 +176,6 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     setStep(2);
   };
 
-  // ============================================
-  // STEP 2: SHIPPING INFO VALIDATION
-  // ============================================
   const handleSubmitShippingInfo = () => {
     if (!shippingInfo.address.trim()) {
       toast.error("Street address is required");
@@ -222,9 +216,6 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     setStep(3);
   };
 
-  // ============================================
-  // STOCK VALIDATION
-  // ============================================
   const validateStock = async () => {
     try {
       for (const item of items) {
@@ -262,9 +253,6 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
-  // ============================================
-  // CREATE CUSTOMER
-  // ============================================
   const createCustomer = async () => {
     try {
       const fullName = `${customerInfo.firstName} ${customerInfo.lastName}`;
@@ -294,9 +282,6 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
-  // ============================================
-  // CREATE ORDER
-  // ============================================
   const createOrder = async (customerId: string) => {
     try {
       const shippingAddress = `${shippingInfo.address}, ${shippingInfo.city}, ${shippingInfo.state} ${shippingInfo.zipCode}, ${shippingInfo.country}`;
@@ -333,9 +318,6 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
-  // ============================================
-  // STEP 3: PAYMENT & SUBMIT
-  // ============================================
   const handleSubmitPayment = async () => {
     if (paymentMethod === "card") {
       if (!paymentInfo.cardNumber.trim()) {
@@ -401,7 +383,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
 
       toast.success("Order placed successfully!");
       setTimeout(() => {
-        onOrderComplete();
+        onOrderComplete(orderId); // FIXED: Now passing orderId
       }, 1500);
 
     } catch (error) {
@@ -411,9 +393,6 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
-  // ============================================
-  // RENDER
-  // ============================================
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b sticky top-0 z-10">
