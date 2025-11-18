@@ -18,6 +18,96 @@ interface CheckoutProps {
   onOrderComplete: () => void;
 }
 
+// ============================================
+// VALIDATION FUNCTIONS
+// ============================================
+
+const isValidEmail = (email: string): boolean => {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+};
+
+const isValidPhone = (phone: string): boolean => {
+  if (!phone) return true; // Phone is optional
+  const phoneRegex = /^[\d\s\-\+\(\)]+$/;
+  return phoneRegex.test(phone) && phone.replace(/\D/g, '').length >= 10;
+};
+
+const isValidName = (name: string): boolean => {
+  const nameRegex = /^[a-zA-Z\s\-']+$/;
+  return nameRegex.test(name) && name.trim().length >= 2;
+};
+
+const isValidAddress = (address: string): boolean => {
+  return address.trim().length >= 5;
+};
+
+const isValidCity = (city: string): boolean => {
+  const cityRegex = /^[a-zA-Z\s\-']+$/;
+  return cityRegex.test(city) && city.trim().length >= 2;
+};
+
+const isValidState = (state: string): boolean => {
+  const stateRegex = /^[a-zA-Z\s]{2,}$/;
+  return stateRegex.test(state);
+};
+
+const isValidZipCode = (zipCode: string): boolean => {
+  const zipRegex = /^[\d\-\s]{3,10}$/;
+  return zipRegex.test(zipCode);
+};
+
+const isValidCardNumber = (cardNumber: string): boolean => {
+  const cleaned = cardNumber.replace(/\s/g, '');
+  return /^\d{13,19}$/.test(cleaned);
+};
+
+const isValidExpiryDate = (expiry: string): boolean => {
+  const expiryRegex = /^(0[1-9]|1[0-2])\/\d{2}$/;
+  if (!expiryRegex.test(expiry)) return false;
+  
+  const [month, year] = expiry.split('/');
+  const expDate = new Date(2000 + parseInt(year), parseInt(month) - 1);
+  const now = new Date();
+  
+  return expDate > now;
+};
+
+const isValidCVV = (cvv: string): boolean => {
+  return /^\d{3,4}$/.test(cvv);
+};
+
+// ============================================
+// FORMATTING FUNCTIONS
+// ============================================
+
+const formatPhoneNumber = (value: string): string => {
+  const cleaned = value.replace(/\D/g, '');
+  const match = cleaned.match(/^(\d{0,3})(\d{0,3})(\d{0,4})$/);
+  if (!match) return value;
+  
+  const parts = [match[1], match[2], match[3]].filter(Boolean);
+  return parts.join('-');
+};
+
+const formatCardNumber = (value: string): string => {
+  const cleaned = value.replace(/\s/g, '');
+  const match = cleaned.match(/.{1,4}/g);
+  return match ? match.join(' ') : cleaned;
+};
+
+const formatExpiryDate = (value: string): string => {
+  const cleaned = value.replace(/\D/g, '');
+  if (cleaned.length >= 2) {
+    return cleaned.slice(0, 2) + '/' + cleaned.slice(2, 4);
+  }
+  return cleaned;
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
+
 export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [paymentMethod, setPaymentMethod] = useState("card");
@@ -50,46 +140,113 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
   const tax = subtotal * 0.08;
   const total = subtotal + shipping + tax;
 
+  // ============================================
+  // STEP 1: CUSTOMER INFO VALIDATION
+  // ============================================
   const handleSubmitCustomerInfo = () => {
-    if (!customerInfo.firstName || !customerInfo.lastName || !customerInfo.email) {
-      toast.error("Please fill in all required fields");
+    if (!customerInfo.firstName.trim()) {
+      toast.error("First name is required");
       return;
     }
+    if (!isValidName(customerInfo.firstName)) {
+      toast.error("First name contains invalid characters");
+      return;
+    }
+    
+    if (!customerInfo.lastName.trim()) {
+      toast.error("Last name is required");
+      return;
+    }
+    if (!isValidName(customerInfo.lastName)) {
+      toast.error("Last name contains invalid characters");
+      return;
+    }
+    
+    if (!customerInfo.email.trim()) {
+      toast.error("Email is required");
+      return;
+    }
+    if (!isValidEmail(customerInfo.email)) {
+      toast.error("Please enter a valid email address");
+      return;
+    }
+    
+    if (customerInfo.phone && !isValidPhone(customerInfo.phone)) {
+      toast.error("Please enter a valid phone number");
+      return;
+    }
+    
     setStep(2);
   };
 
+  // ============================================
+  // STEP 2: SHIPPING INFO VALIDATION
+  // ============================================
   const handleSubmitShippingInfo = () => {
-    if (!shippingInfo.address || !shippingInfo.city || !shippingInfo.state || !shippingInfo.zipCode) {
-      toast.error("Please fill in all required fields");
+    if (!shippingInfo.address.trim()) {
+      toast.error("Street address is required");
       return;
     }
+    if (!isValidAddress(shippingInfo.address)) {
+      toast.error("Please enter a valid street address (at least 5 characters)");
+      return;
+    }
+    
+    if (!shippingInfo.city.trim()) {
+      toast.error("City is required");
+      return;
+    }
+    if (!isValidCity(shippingInfo.city)) {
+      toast.error("Please enter a valid city name");
+      return;
+    }
+    
+    if (!shippingInfo.state.trim()) {
+      toast.error("State is required");
+      return;
+    }
+    if (!isValidState(shippingInfo.state)) {
+      toast.error("Please enter a valid state");
+      return;
+    }
+    
+    if (!shippingInfo.zipCode.trim()) {
+      toast.error("ZIP code is required");
+      return;
+    }
+    if (!isValidZipCode(shippingInfo.zipCode)) {
+      toast.error("Please enter a valid ZIP code");
+      return;
+    }
+    
     setStep(3);
   };
 
-
+  // ============================================
+  // STOCK VALIDATION
+  // ============================================
   const validateStock = async () => {
     try {
       for (const item of items) {
         if (!item.variantId) {
           return { valid: false, message: `${item.name} is missing variant information` };
         }
-  
-        // Use lowercase table name for Supabase
+
         const { data, error } = await supabase
-          .from('productvariants')  // ✅ Changed to lowercase
-          .select('stockquantity, instock')  // ✅ Changed to lowercase columns
-          .eq('variantid', item.variantId)  // ✅ Changed to lowercase
+          .from('productvariants')
+          .select('stockquantity, instock')
+          .eq('variantid', item.variantId)
           .single();
-  
+
         if (error) {
           console.error('Stock validation error:', error);
           return { valid: false, message: `Could not verify stock for ${item.name}` };
         }
-  
+
         if (!data) {
           return { valid: false, message: `Variant not found for ${item.name}` };
         }
-  
+
         if (!data.instock || data.stockquantity < item.quantity) {
           return { 
             valid: false, 
@@ -97,7 +254,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
           };
         }
       }
-  
+
       return { valid: true };
     } catch (error) {
       console.error('Stock validation error:', error);
@@ -105,6 +262,9 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
+  // ============================================
+  // CREATE CUSTOMER
+  // ============================================
   const createCustomer = async () => {
     try {
       const fullName = `${customerInfo.firstName} ${customerInfo.lastName}`;
@@ -134,6 +294,9 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
+  // ============================================
+  // CREATE ORDER
+  // ============================================
   const createOrder = async (customerId: string) => {
     try {
       const shippingAddress = `${shippingInfo.address}, ${shippingInfo.city}, ${shippingInfo.state} ${shippingInfo.zipCode}, ${shippingInfo.country}`;
@@ -170,10 +333,46 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
+  // ============================================
+  // STEP 3: PAYMENT & SUBMIT
+  // ============================================
   const handleSubmitPayment = async () => {
-    if (paymentMethod === "card" && (!paymentInfo.cardNumber || !paymentInfo.cardName || !paymentInfo.expiryDate || !paymentInfo.cvv)) {
-      toast.error("Please fill in all payment details");
-      return;
+    if (paymentMethod === "card") {
+      if (!paymentInfo.cardNumber.trim()) {
+        toast.error("Card number is required");
+        return;
+      }
+      if (!isValidCardNumber(paymentInfo.cardNumber)) {
+        toast.error("Please enter a valid card number");
+        return;
+      }
+      
+      if (!paymentInfo.cardName.trim()) {
+        toast.error("Cardholder name is required");
+        return;
+      }
+      if (!isValidName(paymentInfo.cardName)) {
+        toast.error("Please enter a valid cardholder name");
+        return;
+      }
+      
+      if (!paymentInfo.expiryDate.trim()) {
+        toast.error("Expiry date is required");
+        return;
+      }
+      if (!isValidExpiryDate(paymentInfo.expiryDate)) {
+        toast.error("Please enter a valid expiry date (MM/YY) in the future");
+        return;
+      }
+      
+      if (!paymentInfo.cvv.trim()) {
+        toast.error("CVV is required");
+        return;
+      }
+      if (!isValidCVV(paymentInfo.cvv)) {
+        toast.error("Please enter a valid CVV (3-4 digits)");
+        return;
+      }
     }
 
     setIsProcessing(true);
@@ -212,6 +411,9 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
     }
   };
 
+  // ============================================
+  // RENDER
+  // ============================================
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b sticky top-0 z-10">
@@ -229,6 +431,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
       <main className="container mx-auto px-4 py-8">
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
+            {/* Progress Steps */}
             <div className="flex items-center justify-between mb-8">
               {[
                 { num: 1, label: "Information", icon: User },
@@ -247,6 +450,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
               ))}
             </div>
 
+            {/* STEP 1: Customer Information */}
             {step === 1 && (
               <Card>
                 <CardHeader>
@@ -256,26 +460,54 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="firstName">First Name *</Label>
-                      <Input id="firstName" value={customerInfo.firstName} onChange={(e) => setCustomerInfo({ ...customerInfo, firstName: e.target.value })} />
+                      <Input 
+                        id="firstName" 
+                        value={customerInfo.firstName} 
+                        onChange={(e) => setCustomerInfo({ ...customerInfo, firstName: e.target.value })} 
+                        placeholder="John"
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="lastName">Last Name *</Label>
-                      <Input id="lastName" value={customerInfo.lastName} onChange={(e) => setCustomerInfo({ ...customerInfo, lastName: e.target.value })} />
+                      <Input 
+                        id="lastName" 
+                        value={customerInfo.lastName} 
+                        onChange={(e) => setCustomerInfo({ ...customerInfo, lastName: e.target.value })} 
+                        placeholder="Doe"
+                      />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="email">Email Address *</Label>
-                    <Input id="email" type="email" value={customerInfo.email} onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })} />
+                    <Input 
+                      id="email" 
+                      type="email" 
+                      value={customerInfo.email} 
+                      onChange={(e) => setCustomerInfo({ ...customerInfo, email: e.target.value })} 
+                      placeholder="john.doe@example.com"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="phone">Phone Number</Label>
-                    <Input id="phone" type="tel" value={customerInfo.phone} onChange={(e) => setCustomerInfo({ ...customerInfo, phone: e.target.value })} />
+                    <Input 
+                      id="phone" 
+                      type="tel" 
+                      value={customerInfo.phone} 
+                      onChange={(e) => setCustomerInfo({ 
+                        ...customerInfo, 
+                        phone: formatPhoneNumber(e.target.value)
+                      })} 
+                      placeholder="123-456-7890"
+                    />
                   </div>
-                  <Button onClick={handleSubmitCustomerInfo} className="w-full" size="lg">Continue to Shipping</Button>
+                  <Button onClick={handleSubmitCustomerInfo} className="w-full" size="lg">
+                    Continue to Shipping
+                  </Button>
                 </CardContent>
               </Card>
             )}
 
+            {/* STEP 2: Shipping Address */}
             {step === 2 && (
               <Card>
                 <CardHeader>
@@ -284,22 +516,46 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="address">Street Address *</Label>
-                    <Input id="address" value={shippingInfo.address} onChange={(e) => setShippingInfo({ ...shippingInfo, address: e.target.value })} />
+                    <Input 
+                      id="address" 
+                      value={shippingInfo.address} 
+                      onChange={(e) => setShippingInfo({ ...shippingInfo, address: e.target.value })} 
+                      placeholder="123 Main St"
+                    />
                   </div>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="city">City *</Label>
-                      <Input id="city" value={shippingInfo.city} onChange={(e) => setShippingInfo({ ...shippingInfo, city: e.target.value })} />
+                      <Input 
+                        id="city" 
+                        value={shippingInfo.city} 
+                        onChange={(e) => setShippingInfo({ ...shippingInfo, city: e.target.value })} 
+                        placeholder="New York"
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="state">State *</Label>
-                      <Input id="state" value={shippingInfo.state} onChange={(e) => setShippingInfo({ ...shippingInfo, state: e.target.value })} />
+                      <Input 
+                        id="state" 
+                        value={shippingInfo.state} 
+                        onChange={(e) => setShippingInfo({ ...shippingInfo, state: e.target.value })} 
+                        placeholder="NY"
+                      />
                     </div>
                   </div>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="zipCode">ZIP Code *</Label>
-                      <Input id="zipCode" value={shippingInfo.zipCode} onChange={(e) => setShippingInfo({ ...shippingInfo, zipCode: e.target.value })} />
+                      <Input 
+                        id="zipCode" 
+                        value={shippingInfo.zipCode} 
+                        onChange={(e) => setShippingInfo({ 
+                          ...shippingInfo, 
+                          zipCode: e.target.value.replace(/[^\d\-]/g, '')
+                        })} 
+                        placeholder="10001"
+                        maxLength={10}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="country">Country *</Label>
@@ -317,13 +573,18 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
                     </div>
                   </div>
                   <div className="flex gap-4">
-                    <Button variant="outline" className="flex-1" onClick={() => setStep(1)}>Back</Button>
-                    <Button onClick={handleSubmitShippingInfo} className="flex-1" size="lg">Continue to Payment</Button>
+                    <Button variant="outline" className="flex-1" onClick={() => setStep(1)}>
+                      Back
+                    </Button>
+                    <Button onClick={handleSubmitShippingInfo} className="flex-1" size="lg">
+                      Continue to Payment
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
             )}
 
+            {/* STEP 3: Payment */}
             {step === 3 && (
               <Card>
                 <CardHeader>
@@ -349,20 +610,52 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
                     <div className="space-y-4 pt-4">
                       <div className="space-y-2">
                         <Label htmlFor="cardNumber">Card Number *</Label>
-                        <Input id="cardNumber" placeholder="1234 5678 9012 3456" value={paymentInfo.cardNumber} onChange={(e) => setPaymentInfo({ ...paymentInfo, cardNumber: e.target.value })} maxLength={19} />
+                        <Input 
+                          id="cardNumber" 
+                          placeholder="1234 5678 9012 3456" 
+                          value={paymentInfo.cardNumber} 
+                          onChange={(e) => setPaymentInfo({ 
+                            ...paymentInfo, 
+                            cardNumber: formatCardNumber(e.target.value)
+                          })} 
+                          maxLength={19}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="cardName">Cardholder Name *</Label>
-                        <Input id="cardName" placeholder="John Doe" value={paymentInfo.cardName} onChange={(e) => setPaymentInfo({ ...paymentInfo, cardName: e.target.value })} />
+                        <Input 
+                          id="cardName" 
+                          placeholder="John Doe" 
+                          value={paymentInfo.cardName} 
+                          onChange={(e) => setPaymentInfo({ ...paymentInfo, cardName: e.target.value })} 
+                        />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="expiryDate">Expiry Date *</Label>
-                          <Input id="expiryDate" placeholder="MM/YY" value={paymentInfo.expiryDate} onChange={(e) => setPaymentInfo({ ...paymentInfo, expiryDate: e.target.value })} maxLength={5} />
+                          <Input 
+                            id="expiryDate" 
+                            placeholder="MM/YY" 
+                            value={paymentInfo.expiryDate} 
+                            onChange={(e) => setPaymentInfo({ 
+                              ...paymentInfo, 
+                              expiryDate: formatExpiryDate(e.target.value)
+                            })} 
+                            maxLength={5}
+                          />
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="cvv">CVV *</Label>
-                          <Input id="cvv" placeholder="123" value={paymentInfo.cvv} onChange={(e) => setPaymentInfo({ ...paymentInfo, cvv: e.target.value })} maxLength={4} />
+                          <Input 
+                            id="cvv" 
+                            placeholder="123" 
+                            value={paymentInfo.cvv} 
+                            onChange={(e) => setPaymentInfo({ 
+                              ...paymentInfo, 
+                              cvv: e.target.value.replace(/\D/g, '')
+                            })} 
+                            maxLength={4}
+                          />
                         </div>
                       </div>
                     </div>
@@ -381,7 +674,9 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
                   )}
 
                   <div className="flex gap-4 pt-4">
-                    <Button variant="outline" className="flex-1" onClick={() => setStep(2)} disabled={isProcessing}>Back</Button>
+                    <Button variant="outline" className="flex-1" onClick={() => setStep(2)} disabled={isProcessing}>
+                      Back
+                    </Button>
                     <Button onClick={handleSubmitPayment} className="flex-1" size="lg" disabled={isProcessing}>
                       {isProcessing ? (
                         <>
@@ -398,6 +693,7 @@ export function Checkout({ items, onBack, onOrderComplete }: CheckoutProps) {
             )}
           </div>
 
+          {/* Order Summary Sidebar */}
           <div className="lg:col-span-1">
             <Card className="sticky top-24">
               <CardHeader>

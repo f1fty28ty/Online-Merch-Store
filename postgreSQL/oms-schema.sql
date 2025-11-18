@@ -7,6 +7,8 @@
 DROP TYPE IF EXISTS size CASCADE;
 DROP TYPE IF EXISTS color CASCADE;
 DROP TYPE IF EXISTS order_status CASCADE;
+DROP TABLE IF EXISTS orderitems CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
 
 -- Order Status Enum
 CREATE TYPE order_status AS ENUM ('pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled');
@@ -127,37 +129,55 @@ CREATE TABLE IF NOT EXISTS PaymentMethods (
     FOREIGN KEY (customerId) REFERENCES Customers(customerId)
 );
 
--- Orders
-CREATE TABLE IF NOT EXISTS Orders (
-    orderId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customerId UUID NOT NULL,
-    orderTimestamp TIMESTAMP DEFAULT NOW(),
+-- Recreate Orders table
+CREATE TABLE orders (
+    orderid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    customerid UUID NOT NULL,
+    ordertimestamp TIMESTAMP DEFAULT NOW(),
     status order_status DEFAULT 'pending',
     subtotal DECIMAL(10,2) NOT NULL,
-    shippingCost DECIMAL(10,2) DEFAULT 0,
-    totalAmount DECIMAL(10,2) NOT NULL,
-    shippingAddress TEXT NOT NULL,
+    shippingcost DECIMAL(10,2) DEFAULT 0,
+    totalamount DECIMAL(10,2) NOT NULL,
+    shippingaddress TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (customerId) REFERENCES Customers(customerId)
+    FOREIGN KEY (customerid) REFERENCES customers(customerid)
 );
 
--- Order Items - now references variants
-CREATE TABLE IF NOT EXISTS OrderItems (
-    orderItemId UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    orderId UUID NOT NULL,
-    variantId UUID NOT NULL,
-    productName VARCHAR(255),
-    sizeName VARCHAR(50),
-    colorName VARCHAR(50),
+-- Recreate OrderItems table
+CREATE TABLE orderitems (
+    orderitemid UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    orderid UUID NOT NULL,
+    variantid UUID NOT NULL,
+    productname VARCHAR(255),
+    sizename VARCHAR(50),
+    colorname VARCHAR(50),
     quantity INT NOT NULL CHECK (quantity > 0),
-    unitPrice DECIMAL(10,2) NOT NULL,
+    unitprice DECIMAL(10,2) NOT NULL,
     subtotal DECIMAL(10,2) NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
-    FOREIGN KEY (orderId) REFERENCES Orders(orderId) ON DELETE CASCADE,
-    FOREIGN KEY (variantId) REFERENCES ProductVariants(variantId)
+    FOREIGN KEY (orderid) REFERENCES orders(orderid) ON DELETE CASCADE,
+    FOREIGN KEY (variantid) REFERENCES productvariants(variantid)
 );
 
+-- Create indexes for better performance
+CREATE INDEX idx_orders_customer ON orders(customerid);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orderitems_order ON orderitems(orderid);
+CREATE INDEX idx_orderitems_variant ON orderitems(variantid);
+
+-- Verify the tables
+SELECT 'Orders columns:' as info;
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'orders'
+ORDER BY ordinal_position;
+
+SELECT 'OrderItems columns:' as info;
+SELECT column_name, data_type 
+FROM information_schema.columns 
+WHERE table_name = 'orderitems'
+ORDER BY ordinal_position;
 -- ============================================
 -- SEED DATA FOR VARIANTS
 -- ============================================

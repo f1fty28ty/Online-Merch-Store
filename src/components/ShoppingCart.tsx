@@ -42,7 +42,8 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
           </div>
         ) : (
           <>
-            <ScrollArea className="flex-1 -mx-6 px-6">
+            {/* Fixed: Added max-height and proper scrolling */}
+            <ScrollArea className="flex-1 pr-4" style={{ maxHeight: 'calc(100vh - 280px)' }}>
               <div className="space-y-4 py-4">
                 {items.map((item, index) => (
                   <div key={`${item.id}-${item.variantId}-${index}`} className="flex gap-4">
@@ -54,7 +55,7 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
                       />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold mb-1">{item.name}</h4>
+                      <h4 className="font-semibold mb-1 text-sm">{item.name}</h4>
                       <p className="text-gray-600 text-sm font-medium">${item.price.toFixed(2)}</p>
                       {item.selectedSize && (
                         <p className="text-gray-500 text-xs">Size: {item.selectedSize}</p>
@@ -99,8 +100,7 @@ export function ShoppingCartComponent({ items, onUpdateQuantity, onRemoveItem, o
               </div>
             </ScrollArea>
             
-            <div className="space-y-4 pt-4">
-              <Separator />
+            <div className="space-y-4 pt-4 border-t">
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600">Subtotal</span>
